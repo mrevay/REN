@@ -1,0 +1,4 @@
+/data/*
+.vscode
+
+/results/observer_design/state_estimates
