@@ -38,9 +38,19 @@ end
 function calculate_weights(x::AbstractMatrix, kernel::identity_kernel)
     n = size(x, 2)
     W = ones(n, n)
-    return W
+return W
 end
 
+# Returns the weight matrix between clusters
+function collect_weights(W, indices)
+
+    q = length(indices)
+    M = zeros(q, q)
+    for (l, k) in product(1:q, 1:q)
+        M[l, k] = sum(W[indices[l], indices[k]])
+    end
+    return M
+end
 
 function tests()
     x = sort(randn(2, 100), dims=2)

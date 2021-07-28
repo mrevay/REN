@@ -1,31 +1,53 @@
 using Plots
 using Distributions
 using Revise
-
+using LinearAlgebra
 using Optim
 
 includet("utils.jl")
 
 
-# Original Convex clustering Objective
-function J(x, mu, W, λ)
+# # Original Convex clustering Objective
+function convex_clustering_objective(x::AbstractMatrix, mu::AbstractMatrix, kernel::weight_kernel, λi)
     q = size(x, 2)
+
+    # Scaled input
+    x_bar = mean(x, dims=2)
+    σ = std(norm.(eachcol(x .- x_bar)))
+    λ = λi * σ
+
+    W = calculate_weights(x, kernel)
     gram = [W[i, j] * norm(mu[:, i] - mu[:, j]) for (i, j) in product(1:q, 1:q)]
-    return sum((x .- mu).^2) + λ * sum(gram)
+    return sum((x .- mu).^2) / 2 + λ * sum(gram)
+end
+
+# Same function as above but takes cluster set as input
+function convex_clustering_objective(x, Ω::cluster_set, kernel::weight_kernel, λi)
+    n = size(x, 2)
+    
+    # Scaled input
+    x_bar = mean(x, dims=2)
+    σ = std(norm.(eachcol(x .- x_bar)))
+    λ = λi * σ
+
+    mu = label_data(Ω, x)
+    W = calculate_weights(x, kernel)
+    gram = [W[i, j] * norm(mu[:, i] - mu[:, j]) for (i, j) in product(1:n, 1:n)]
+    return sum((x .- mu).^2) / 2 + λ * sum(gram)
 end
 
 
-# Optimzied method for evaluating objective function
-#  should probably use static arrays
-function Jk(muc, c, xbar, α, mu, n, λ)
+# QLAD objective
+function Jk(muk, k, xbar, α, mu, n, λ)
     q = length(n)
 
      # in case of unmerged clusters at c
-    indices = filter(idx -> mu[idx] != mu[c], 1:q)
-    Δmu = norm.(mu[indices] .- [muc])
+    indices = filter(idx -> mu[idx] != mu[k], 1:q)
+    # indices = filter(idx -> idx != k, 1:q)
+    Δmu = norm.(mu[indices] .- [muk])
 
-    S = sum(Δmu .* α[indices, c])
-    return n[c] * norm(xbar - muc)^2 / 2 + (λ * S)
+    S = sum(Δmu .* α[indices, k])
+    return n[k] / 2 * sum((xbar - muk).^2) + (2 * λ * S)
 end
 
 
@@ -63,32 +85,37 @@ end
 # end
 
 
-function qlad(c, xbar, mu, α, λ, n)
+function qlad(k, xbar, mu, α, λ, n; merge_clusters=true)
+
     q = length(n)
 
     # Check if any of the notches are optima
-    for a in 1:q
-        if a == c
-            continue
-        end
+    if merge_clusters
+        for c in 1:q
 
-        indices = filter(idx -> mu[idx] != mu[a] && idx != c, 1:q)
-        notches = filter(idx -> mu[idx] == mu[a] && idx != c, 1:q)
-        
-        Δmu = mu[indices] .- mu[a:a]
-        Δmuhat = Δmu ./ norm.(Δmu)
-        
-        Sk = length(indices) > 0 ? sum(Δmuhat .* α[indices, c]) : zeros(size(xbar))
+            # Maybe remove this condition?
+            if c == k
+                continue
+            end
 
-        if λ * sum(α[c, notches]) >= norm(-n[c] * (xbar - mu[c]) - λ * Sk)
-            println("Merging clusters ", c, " -> ", a)
-            return mu[a]
+            ℓ = filter(idx -> idx != c && idx != k, 1:q)
+
+            Δmu = mu[ℓ] .- mu[c:c]
+            Δmuhat = Δmu ./ norm.(Δmu)
+    
+            # In case there is only one cluster
+            Sk = length(ℓ) > 0 ? sum(Δmuhat .* α[k, ℓ]) : zeros(size(xbar))
+
+            # if λ * sum(α[c, notches]) >= norm(n[c] * (xbar - mu[k]) + λ * Sk)
+            if 2 * λ * α[c, k] >= norm(n[k] * (xbar - mu[c]) + 2 * λ * Sk)
+                println("Merging clusters ", k, " -> ", c)
+                return mu[c]
+            end
         end
     end
-
     # If optima are not notches, optimize via LBFGS
-    obj(muc) = Jk(muc, c, xbar, α, mu, n, λ)
-    result = Optim.optimize(obj, copy(mu[c]), Optim.LBFGS()) 
+    obj(muc) = Jk(muc, k, xbar, α, mu, n, λ)
+    result = Optim.optimize(obj, copy(mu[k]), Optim.LBFGS()) 
 
     # grad(dJ, muc) = ∇Jk!(dJ, muc, c, xbar, mu, n, λ)
     # result = Optim.optimize(obj, mu[:, c:c], Optim.LBFGS()) 

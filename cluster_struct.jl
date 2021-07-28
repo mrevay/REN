@@ -1,13 +1,13 @@
 
 import Base.length
-includet("utils.jl")
+using Test
 
 mutable struct cluster_set
     centers
     indices
 end
 
-cluster_set(mu::Matrix) = cluster_set(collect(eachcol(mu)), [[i] for i in 1:size(mu, 2)])
+cluster_set(mu::Matrix) = cluster_set(deepcopy(collect(eachcol(mu))), [[i] for i in 1:size(mu, 2)])
 cluster_set(mu::Vector) = cluster_set(mu, [[i] for i in 1:length(mu)])
 
 function update_clusters!(Ω::cluster_set, k::Int, mu_new)
@@ -19,7 +19,7 @@ function update_clusters!(Ω::cluster_set, k::Int, mu_new)
     indices = findall(mui -> mui == mu_new, Ω.centers)
 
     # merge all centers with common indices
-    for idx in indices[2:end]
+    for idx in indices[end:-1:2]
         append!(Ω.indices[indices[1]], Ω.indices[idx])
         deleteat!(Ω.indices, idx)
         deleteat!(Ω.centers, idx)
@@ -27,6 +27,18 @@ function update_clusters!(Ω::cluster_set, k::Int, mu_new)
     
     return nothing
 end
+
+
+function label_data(Ω, x)
+    labels = zeros(size(x))
+    q = length(Ω)
+
+    for i in 1:q
+        labels[:, Ω.indices[i]] .= Ω.centers[i]
+    end
+    return labels
+end
+
 
 length(Ω::cluster_set) = length(Ω.centers)
 cluster_sizes(Ω::cluster_set) = length.(Ω.indices)
@@ -50,3 +62,4 @@ function test_clusters()
     Ω.indices
    
 end
+

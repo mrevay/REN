@@ -47,27 +47,27 @@ function calc_cluster_indices(μ)
 end
 
 
-function merge_clusters(centers, indices)
-    # Construct clusters via hashing
-    clusters = Dict()
-    for (i, μi) in zip(indices, eachcol(centers))
-        if haskey(clusters, μi)
-            append!(clusters[μi], i)
-        else
-            clusters[μi] = i
-        end
-    end
+# function merge_clusters(centers, indices)
+#     # Construct clusters via hashing
+#     clusters = Dict()
+#     for (i, μi) in zip(indices, eachcol(centers))
+#         if haskey(clusters, μi)
+#             append!(clusters[μi], i)
+#         else
+#             clusters[μi] = i
+#         end
+#     end
 
-    # q = length(clusters)
-    # n = size(μ, 1)
-    # centers = SizedMatrix{n,q}(reduce(hcat, k for (k, v) in clusters))
+#     # q = length(clusters)
+#     # n = size(μ, 1)
+#     # centers = SizedMatrix{n,q}(reduce(hcat, k for (k, v) in clusters))
     
-    # covnert to more convenient datastructure
-    centers = reduce(hcat, k for (k, v) in clusters)
-    indices = reduce(hcat, [v] for (k, v) in clusters)
+#     # convert to more convenient datastructure
+#     centers = reduce(hcat, k for (k, v) in clusters)
+#     indices = reduce(hcat, [v] for (k, v) in clusters)
 
-    return centers, indices
-end
+#     return centers, indices
+# end
 
 
 
@@ -135,4 +135,24 @@ function plot_2D_clusters(x, Ω::cluster_set)
         plot!(muc[1:1], muc[2:2]; st=:scatter, alpha=0.4, ms=ms)
     end
     return plt
+end
+
+
+function plot_regularization_path(x, Ω)
+    
+    data_x = []
+    data_y = []
+    for i in 1:length(Ω)
+        labels = label_data(Ω[i], x)
+        push!(data_x, labels[1, :])
+        push!(data_y, labels[2, :])
+    end
+    Dx = copy(hcat(data_x...)')
+    Dy = copy(hcat(data_y...)')
+
+    
+    plot(Dx, Dy, label=nothing; c=:black)
+    plot!(x[1,:], x[2,:]; st=:scatter, c=:black, alpha=0.6)
+    
+
 end
