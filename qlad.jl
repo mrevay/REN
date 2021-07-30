@@ -11,12 +11,13 @@ includet("utils.jl")
 function convex_clustering_objective(x::AbstractMatrix, mu::AbstractMatrix, kernel::weight_kernel, λi)
     q = size(x, 2)
 
+    W = calculate_weights(x, kernel)
+
     # Scaled input
     x_bar = mean(x, dims=2)
     σ = std(norm.(eachcol(x .- x_bar)))
-    λ = λi * σ
-
-    W = calculate_weights(x, kernel)
+    λ = λi * σ / norm(W)
+    
     gram = [W[i, j] * norm(mu[:, i] - mu[:, j]) for (i, j) in product(1:q, 1:q)]
     return sum((x .- mu).^2) / 2 + λ * sum(gram)
 end
@@ -25,13 +26,14 @@ end
 function convex_clustering_objective(x, Ω::cluster_set, kernel::weight_kernel, λi)
     n = size(x, 2)
     
+    
+    W = calculate_weights(x, kernel)
     # Scaled input
     x_bar = mean(x, dims=2)
     σ = std(norm.(eachcol(x .- x_bar)))
-    λ = λi * σ
+    λ = λi * σ / norm(W)
 
     mu = label_data(Ω, x)
-    W = calculate_weights(x, kernel)
     gram = [W[i, j] * norm(mu[:, i] - mu[:, j]) for (i, j) in product(1:n, 1:n)]
     return sum((x .- mu).^2) / 2 + λ * sum(gram)
 end
@@ -43,7 +45,6 @@ function Jk(muk, k, xbar, α, mu, n, λ)
 
      # in case of unmerged clusters at c
     indices = filter(idx -> mu[idx] != mu[k], 1:q)
-    # indices = filter(idx -> idx != k, 1:q)
     Δmu = norm.(mu[indices] .- [muk])
 
     S = sum(Δmu .* α[indices, k])
@@ -51,33 +52,37 @@ function Jk(muk, k, xbar, α, mu, n, λ)
 end
 
 
-# # function ∇Jk(muc, c, xbar, mu, n, λ)
-# #     dJ = zeros(size(muc))
-# #     ∇J!(dJ, muc, c, xbar, mu, n, λ)
-# #     return dJ
-# # end
+function ∇Jk(muk, k, xbar, α, mu, n, λ)
+    dJ = zeros(size(muk))
+    ∇J!(dJ, muk, k, xbar, α, mu, n, λ)
+    return dJ
+end
 
-
-# # function ∇Jk!(dJ, muc, c, xbar, mu, n, λ)
-# #     q = size(mu, 2)
+function ∇Jk!(dJ, muk, k, xbar, α, mu, n, λ)
+    q = size(mu, 2)
     
-# #     Δmu = mu[:, 1:q .!= c] .- muc
-# #     Δmu = Δmu ./ sqrt.(sum(abs2, Δmu, dims=1))  
-# #     dJ .= -n[c] * (xbar - muc) - n[c] * λ * (Δmu * n[1:q .!= c])[:, :]
-# #     return nothing
-# # end
+    ℓ = filter(idx -> mu[idx] != mu[k], 1:q)
+    Δmu = mu[ℓ] .- [muk]
+    Δmu = Δmu ./ sqrt.(sum(abs2, Δmu, dims=1))  
+
+    S = sum(Δmu .* α[indices, k])
+
+    dJ .= -n[k] * (xbar - muk) + (2 * λ * S)
+
+    return nothing
+end
 
 # function test_J()
 
 #     xbar = randn(2, 1)
 #     c = 2
-#     muc = SizedMatrix{2,1}(randn(2, 1))
-#     mu = SizedMatrix{2,100}(randn(2, 100))
+#     muc = randn(2, 1)
+#     mu = randn(2, 100)
 #     n = 1 .+ mod.(rand(Int64, 1, 100), 10)
 #     λ = 0.1
 
 #     # compute calues
-#     J1 = J(muc, c, xbar, mu, n, λ)
+#     J1 = Jk(muc, c, xbar, mu, n, λ)
     
 #     dJ1 = ∇J(muc, c, xbar, mu, n, λ)
 #     dJ2 = jacobian(central_fdm(5, 1), x -> J(x, c, xbar, mu, n, λ), muc)
@@ -106,7 +111,7 @@ function qlad(k, xbar, mu, α, λ, n; merge_clusters=true)
             # In case there is only one cluster
             Sk = length(ℓ) > 0 ? sum(Δmuhat .* α[k, ℓ]) : zeros(size(xbar))
 
-            # if λ * sum(α[c, notches]) >= norm(n[c] * (xbar - mu[k]) + λ * Sk)
+            # if 2 * λ * α[c, k] >= norm(n[k] * (xbar - mu[c]) + 2 * λ * Sk)
             if 2 * λ * α[c, k] >= norm(n[k] * (xbar - mu[c]) + 2 * λ * Sk)
                 println("Merging clusters ", k, " -> ", c)
                 return mu[c]
@@ -117,7 +122,7 @@ function qlad(k, xbar, mu, α, λ, n; merge_clusters=true)
     obj(muc) = Jk(muc, k, xbar, α, mu, n, λ)
     result = Optim.optimize(obj, copy(mu[k]), Optim.LBFGS()) 
 
-    # grad(dJ, muc) = ∇Jk!(dJ, muc, c, xbar, mu, n, λ)
+    # grad(dJ, muc) = ∇Jk!(dJ, muc, k, xbar, α, mu, n, λ)
     # result = Optim.optimize(obj, mu[:, c:c], Optim.LBFGS()) 
     
     return Optim.minimizer(result)

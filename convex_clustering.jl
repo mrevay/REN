@@ -1,3 +1,4 @@
+using Plots: label_to_string
 using Pkg
 Pkg.activate(".")
 
@@ -25,7 +26,7 @@ function calculate_clusters!(Ω::cluster_set, x::Matrix, λi::Real, kernel::weig
 
     x_bar = mean(x, dims=2)
     σ = std(norm.(eachcol(x .- x_bar)))
-    λ = λi * σ
+    λ = λi * σ / norm(W)
 
     objective = [convex_clustering_objective(x, Ω, kernel, λi)]
 
@@ -44,7 +45,7 @@ function calculate_clusters!(Ω::cluster_set, x::Matrix, λi::Real, kernel::weig
             α = collect_weights(W, Ω.indices)
             centroids = [mean(x[:, idx], dims=2) for idx in Ω.indices]
 
-            muk = qlad(k, centroids[k], Ω.centers, α, λ, n)
+            muk = qlad(k, centroids[k], Ω.centers, α, λ, n; merge_clusters=merge_clusters)
             if merge_clusters
                 update_clusters!(Ω, k, muk)
             else
@@ -69,7 +70,7 @@ function calculate_clusters!(Ω::cluster_set, x::Matrix, λi::Real, kernel::weig
             sleep(0.0001)
         end
 
-        if abs(objective[end - 1] - objective[end]) .< ϵ
+        if abs(objective[end - 1] - objective[end]) / objective[end] .< ϵ
             println("Finished clustering. ΔJ: ", abs(objective[end - 1] - objective[end]), "\tIterations: ", iter)
             break
         end
@@ -115,41 +116,26 @@ function cluster(x::Matrix, λ::AbstractVector, kernel::weight_kernel;
 end
 
 
-# TODO Scale invariance test.
-#       x and 2*x should lead to the same clusters
-#       If we use N samples,and  T×N samples
-function test_cluster()
 
-    N = 2
-    # sample data
+function convex_cluster(x, λi, K)
     
-    x = [(randn(N, 20) .- 5.0) (randn(N, 20) .+ 6.0)  (randn(N, 20) .+ [15.0; -5.0]) (randn(N, 20) .+ [5.0; -15.0])]
-
-    # Easy way of calculating k is from the svd of the weight matrix?
-    plot(x[1, :], x[2,:]; st=:scatter)
+    q = size(x, 2)
+    μ = Variable(size(x))
+    W = calculate_weights(x, K)
     
-    λi = 0.5
-    K = isotropic_gaussian(20.0)
-    
-    Ω, objective = cluster(x, λi, K; maxIters=100, ϵ=1E-7, plot_result=false);
+    # Scaled input
+    x_bar = mean(x, dims=2)
+    σ = std(norm.(eachcol(x .- x_bar)))
+    λ = λi * σ / norm(W)
 
-    plot()
-    plt = plot_2D_clusters(x, Ω)
-    display(plt)
+    # Construct Objective
+    obj = sumsquares(x-μ)/2 + λ * sum(W[i, j]*norm(μ[:, i] - μ[:, j]) for (i, j) in product(1:q, 1:q))
 
-    # try run again with warmstart
-    λ = collect(0.0001:0.05:10.0)
-    Ω, obj = cluster(x, λ, K; maxIters=100, ϵ=1E-5);
+    # Solve problem
+    problem = Convex.minimize(obj)
+    solve!(problem, SCS.Optimizer)
 
-    Ω2, obj2 = cluster(x, λ, K; maxIters=100, ϵ=1E-6, merge_clusters=false);
-
-    plot()
-    plot_regularization_path(x, Ω)
-
-    plot()
-    plt = plot_2D_clusters(x, Ω);
-    display(plt)
-
+    return μ.value, problem.optval
 end
 
 
@@ -189,40 +175,17 @@ function half_moons()
 end
 
 
-function convex_cluster(x, λi, K)
-    
-    q = size(x, 2)
-    μ = Variable(size(x))
-    W = calculate_weights(x, K)
-    
-    # Scaled input
-    x_bar = mean(x, dims=2)
-    σ = std(norm.(eachcol(x .- x_bar)))
-    λ = λi * σ
-
-    # Construct Objective
-    obj = sumsquares(x-μ)/2 + λ * sum(W[i, j]*norm(μ[:, i] - μ[:, j]) for (i, j) in product(1:q, 1:q))
-    # obj = sum(x-μ)/2 + λ * sum(W[i, j]*norm(μ[:, i] - μ[:, j]) for (i, j) in product(1:q, 1:q))
-
-    # Solve problem
-    problem = Convex.minimize(obj)
-    solve!(problem, SCS.Optimizer)
-
-    return μ.value, problem.optval
-end
-
-
 function time_test()
 
     N = 10
     x = [(0.2*randn(2, N) .- 5.0) (0.2*randn(2, N) .+ 5.0)  (0.2*randn(2, N) .+ [5.0; -5.0]) (0.2*randn(2, N) .+ [-5.0; 5.0])]
-    
+
     λi = 1.0
     K = isotropic_gaussian(10.0)
     # K = identity_kernel()
     
     Ω, objective = cluster(x, λi, K; maxIters=100, ϵ=0.0, plot_result=false);
-    Ω2, objective2 = cluster(x, λi, K; maxIters=100, ϵ=0.0, plot_result=false, merge_clusters=false);
+    # Ω2, objective2 = cluster(x, λi, K; maxIters=100, ϵ=0.0, plot_result=true, merge_clusters=false);
     
     mu, obj = convex_cluster(x, λi, K)
     Ωcvx = cluster_set(mu)
@@ -230,8 +193,6 @@ function time_test()
     plot()
     plt = plot_2D_clusters(x, Ωcvx)
     plt = plot_2D_clusters(x, Ω)
-    # plt = plot_2D_clusters(x, Ω2)
-    # plot!(mu[1,:], mu[2,:]; st=:scatter, ms=4)
 
 
     println("cyclic descent: ", objective[end])
@@ -246,4 +207,49 @@ function time_test()
     # Issue is scaling of λi!!!!!!
 
     plt = plot_2D_clusters(x, Ω2)
+end
+
+
+
+function test_scaling()
+    # Ideally, we should rescale everything to be invariant to the number of points.
+    
+    nPoints = [10, 20, 30, 40, 60, 80, 100, 120]
+    lambdas = [1.0, 5.0, 7.0, 10.0, 20.0]
+    K = isotropic_gaussian(10.0)
+
+    times =  zeros(length(nPoints), length(lambdas))
+    
+    for (i, N) in enumerate(nPoints)    
+        x = [(0.5*randn(2, N) .- [5.0; 2.5]) (0.5*randn(2, N) .+ [5.0; 2.5]) (0.5*randn(2, N) .+ [5.0; -2.5]) (0.5*randn(2, N) .- [5.0; -2.5])]
+        for (j, λi) in enumerate(lambdas)
+
+            println("Testing runtime for λ:", λi, "\t Points: ", 4*N)
+            T = @elapsed Ω, obj_i = cluster(x, λi, K; maxIters=100, ϵ=1E-6, plot_result=false);
+            times[i, j] = T
+        end
+    end
+
+    # Plotting
+    plot(; xlabel="Points", ylabel="Clustering Time")
+    for i in 1:size(times, 1)
+        plot!(4*nPoints, times[:, i]; label=lambdas[i])
+    end
+    plot!()
+
+
+
+    objectives = []
+    for λi in [0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 50.0]
+        Ω, obj_i = cluster(x, λi, K; maxIters=100, ϵ=1E-9, plot_result=false);
+        push!(objectives, obj_i)
+        plot()
+        plt = plot_2D_clusters(x, Ω)
+    end
+
+    plot()
+    for i in 1:length(objectives)
+        plot!(objectives[i] / objectives[i][1])
+    end
+    plot!(;yscale=:log10, xscale=:log10)
 end
